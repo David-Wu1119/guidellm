@@ -12,6 +12,7 @@ from guidellm.benchmark.profiles import ProfileFactory
 from guidellm.benchmark.progress import (
     GenerativeConsoleBenchmarkerProgress,
     GenerativeLoggingBenchmarkerProgress,
+    _GenerativeProgressTaskState,
 )
 from guidellm.benchmark.schemas import (
     BenchmarkConfig,
@@ -19,6 +20,12 @@ from guidellm.benchmark.schemas import (
     GenerativeBenchmarkAccumulator,
 )
 from guidellm.scheduler import SchedulerState, SynchronousStrategy
+from guidellm.schemas import (
+    GenerativeRequestStats,
+    RequestInfo,
+    RequestTimings,
+    UsageMetrics,
+)
 from guidellm.schemas.benchmark.profiles import SynchronousProfileArgs
 
 
@@ -178,3 +185,35 @@ async def test_queued_logs_share_rich_terminal(monkeypatch, accumulator):
     assert ": started |" in output.getvalue()
     assert ": completed |" in output.getvalue()
     assert sys.stderr is output
+
+
+@pytest.mark.regression
+def test_live_update_shows_output_tokens(accumulator):
+    """The live "Gen" figure is the mean output tokens, not the mean total tokens.
+
+    ## WRITTEN BY AI ##
+    """
+    for index in range(4):
+        timings = RequestTimings(
+            resolve_start=1.0 + index,
+            resolve_end=2.0 + index,
+            request_start=1.0 + index,
+            request_end=2.0 + index,
+        )
+        accumulator.completed_metrics.update_estimate(
+            GenerativeRequestStats(
+                request_id=f"req-{index}",
+                info=RequestInfo(
+                    request_id=f"req-{index}", status="completed", timings=timings
+                ),
+                input_metrics=UsageMetrics(text_tokens=100),
+                output_metrics=UsageMetrics(text_tokens=10),
+            ),
+            duration=10.0,
+        )
+
+    state = _GenerativeProgressTaskState(strategy_type="synchronous")
+    state.update(accumulator, SchedulerState(start_time=1.0))
+
+    assert state.prompt_tokens == 100
+    assert state.output_tokens == 10
